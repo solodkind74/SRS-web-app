@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LexiFlow — Vocabulary Builder</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <nav id="navbar"></nav>
+    <main id="main"></main>
+  </div>
+  <div id="toasts"></div>
+  <div id="modal-overlay" onclick="App.closeModal()">
+    <div id="modal" onclick="event.stopPropagation()"></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
