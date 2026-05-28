@@ -66,12 +66,20 @@ const Storage = {
     };
   },
 
-  load() {
+  async load() {
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+      const r = await chrome.storage.local.get(this.KEY);
+      return r[this.KEY] || this.defaults();
+    }
     try { return JSON.parse(localStorage.getItem(this.KEY)) || this.defaults(); }
     catch { return this.defaults(); }
   },
 
   save(data) {
+    if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+      chrome.storage.local.set({ [this.KEY]: data });
+      return;
+    }
     localStorage.setItem(this.KEY, JSON.stringify(data));
   },
 };
@@ -296,8 +304,8 @@ const App = {
   session: null,         // active study session state
   sessionStart: null,
 
-  init() {
-    this.data = Storage.load();
+  async init() {
+    this.data = await Storage.load();
     // ensure all words have required fields (migration safety)
     for (const w of this.data.words) {
       w.usages = w.usages || [];
@@ -307,8 +315,77 @@ const App = {
       w.examples = w.examples || [];
     }
     this.checkInitStreak();
+    this._attachGlobalListeners();
+    this._attachStorageListener();
     window.addEventListener('hashchange', () => this.route());
     this.route();
+  },
+
+  _attachStorageListener() {
+    if (typeof chrome === 'undefined' || !chrome?.storage?.onChanged) return;
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local' || !changes[Storage.KEY]) return;
+      const fresh = changes[Storage.KEY].newValue;
+      if (!fresh) return;
+      for (const w of fresh.words) {
+        w.usages   = w.usages   || [];
+        w.tags     = w.tags     || [];
+        w.notes    = w.notes    || '';
+        w.phonetic = w.phonetic || '';
+        w.examples = w.examples || [];
+      }
+      this.data = fresh;
+      this.renderNav();
+      this.route();
+    });
+  },
+
+  _attachGlobalListeners() {
+    document.addEventListener('click', e => {
+      if (e.target.classList.contains('tag-remove')) { e.target.parentElement.remove(); return; }
+      if (e.target.id === 'modal-overlay') { this.closeModal(); return; }
+      if (e.target.closest('#modal')) { return; } // stop overlay close when clicking inside modal
+      const el = e.target.closest('[data-action]');
+      if (el) this._dispatch(el.dataset.action, el.dataset);
+    });
+    document.addEventListener('input', e => {
+      const el = e.target.closest('[data-oninput]');
+      if (el) this._dispatch(el.dataset.oninput, { ...el.dataset, value: el.value });
+    });
+    document.addEventListener('change', e => {
+      const el = e.target.closest('[data-onchange]');
+      if (el) this._dispatch(el.dataset.onchange, { ...el.dataset, value: el.value });
+    });
+    document.addEventListener('keydown', e => {
+      if (e.target.id === 'f-tags-input') this.handleTagInput(e);
+    });
+  },
+
+  _dispatch(action, d) {
+    switch (action) {
+      case 'navigate':     this.navigate(d.hash); break;
+      case 'back':         history.back(); break;
+      case 'log-usage':    this.openLogUsage(d.id); break;
+      case 'delete-word':  this.deleteWord(d.id); break;
+      case 'save-word':    this.saveWord(d.id || ''); break;
+      case 'rate':         this.rate(parseInt(d.q)); break;
+      case 'reveal-card':  this.revealCard(); break;
+      case 'end-session':  this.endSession(); break;
+      case 'save-usage':   this.saveUsage(d.id); break;
+      case 'close-modal':  this.closeModal(); break;
+      case 'study':        this.renderStudy(d.mode); break;
+      case 'filter-lib': {
+        const s = document.querySelector('.search-input')?.value ?? '';
+        this.renderLibrary(d.filter, s, d.sort || 'newest');
+        break;
+      }
+      case 'sort-lib': {
+        const s = document.querySelector('.search-input')?.value ?? '';
+        this.renderLibrary(d.filter || 'all', s, d.value);
+        break;
+      }
+      case 'search-lib': this.renderLibrary(d.filter, d.value, d.sort); break;
+    }
   },
 
   checkInitStreak() {
@@ -373,7 +450,7 @@ const App = {
       <nav class="nav-tabs">
         ${tabs.map(t => `
           <button class="nav-tab ${active === t.id ? 'active' : ''}"
-            onclick="App.navigate('${t.hash}')">${t.label}</button>
+            data-action="navigate" data-hash="${t.hash}">${t.label}</button>
         `).join('')}
       </nav>
       <div class="nav-stats">
@@ -449,13 +526,13 @@ const App = {
       </div>
 
       <div class="study-cta-row">
-        <div class="study-cta passive" onclick="App.navigate('#/study/passive')">
+        <div class="study-cta passive" data-action="navigate" data-hash="#/study/passive">
           <div class="cta-icon">👁️</div>
           <div class="cta-title">Passive Study</div>
           <div class="cta-desc">Recognition — see word, recall meaning</div>
           <div class="cta-count">${passiveDue} card${passiveDue !== 1 ? 's' : ''} due</div>
         </div>
-        <div class="study-cta active" onclick="App.navigate('#/study/active')">
+        <div class="study-cta active" data-action="navigate" data-hash="#/study/active">
           <div class="cta-icon">✍️</div>
           <div class="cta-title">Active Study</div>
           <div class="cta-desc">Production — see meaning, recall word</div>
@@ -488,7 +565,7 @@ const App = {
               <div class="challenge-word">${esc(challenge.word)}</div>
               <div class="challenge-def">${esc(challenge.definition.slice(0, 100))}${challenge.definition.length > 100 ? '…' : ''}</div>
               <button class="btn btn-secondary btn-sm"
-                onclick="App.openLogUsage('${challenge.id}')">
+                data-action="log-usage" data-id="${challenge.id}">
                 ✔ Log I used this word today (+${XP.log_usage} XP)
               </button>
             </div>
@@ -496,7 +573,7 @@ const App = {
             <div class="card mt-16 text-center" style="padding:32px">
               <div style="font-size:2rem;margin-bottom:12px">🌱</div>
               <div class="text-muted">Add your first word to get a daily challenge!</div>
-              <button class="btn btn-primary mt-16" onclick="App.navigate('#/add')">Add Word</button>
+              <button class="btn btn-primary mt-16" data-action="navigate" data-hash="#/add">Add Word</button>
             </div>
           `}
         </div>
@@ -505,10 +582,10 @@ const App = {
           <div class="card">
             <div class="section-header">
               <div class="section-title">Recently Added</div>
-              <button class="btn btn-secondary btn-sm" onclick="App.navigate('#/library')">View All</button>
+              <button class="btn btn-secondary btn-sm" data-action="navigate" data-hash="#/library">View All</button>
             </div>
             ${recentWords.length ? recentWords.map(w => `
-              <div class="word-list-item" onclick="App.navigate('#/word/${w.id}')">
+              <div class="word-list-item" data-action="navigate" data-hash="#/word/${w.id}">
                 <span class="badge badge-${getMastery(w)}">${masteryLabel(getMastery(w))}</span>
                 <span class="word">${esc(w.word)}</span>
                 <span class="def">${esc(w.definition)}</span>
@@ -516,7 +593,7 @@ const App = {
             `).join('') : `
               <div class="text-center" style="padding:24px">
                 <div class="text-muted">No words yet</div>
-                <button class="btn btn-primary btn-sm mt-16" onclick="App.navigate('#/add')">Add First Word</button>
+                <button class="btn btn-primary btn-sm mt-16" data-action="navigate" data-hash="#/add">Add First Word</button>
               </div>
             `}
           </div>
@@ -570,25 +647,25 @@ const App = {
           <div class="page-title">Library</div>
           <div class="page-subtitle">${d.words.length} words total</div>
         </div>
-        <button class="btn btn-primary" onclick="App.navigate('#/add')">＋ Add Word</button>
+        <button class="btn btn-primary" data-action="navigate" data-hash="#/add">＋ Add Word</button>
       </div>
 
       <div class="library-controls">
         <input class="search-input" type="search" placeholder="Search words or definitions…"
           value="${esc(search)}"
-          oninput="App.renderLibrary('${filter}', this.value, '${sort}')">
+          data-oninput="search-lib" data-filter="${filter}" data-sort="${sort}">
 
         <div class="filter-chips">
           ${['all','new','learning','familiar','mastered','legendary'].map(f => `
             <button class="chip ${filter === f ? 'active' : ''}"
-              onclick="App.renderLibrary('${f}', document.querySelector('.search-input').value, '${sort}')">
+              data-action="filter-lib" data-filter="${f}" data-sort="${sort}">
               ${f === 'all' ? 'All' : masteryLabel(f)}
             </button>
           `).join('')}
         </div>
 
         <select class="form-select" style="width:auto"
-          onchange="App.renderLibrary('${filter}', document.querySelector('.search-input').value, this.value)">
+          data-onchange="sort-lib" data-filter="${filter}">
           <option value="newest" ${sort==='newest'?'selected':''}>Newest</option>
           <option value="alpha"  ${sort==='alpha'?'selected':''}>A–Z</option>
           <option value="due"    ${sort==='due'?'selected':''}>Due Soon</option>
@@ -604,7 +681,7 @@ const App = {
             const passiveDue = w.passive.nextReview <= now;
             const activeDue  = w.active.nextReview <= now;
             return `
-              <div class="word-card" onclick="App.navigate('#/word/${w.id}')">
+              <div class="word-card" data-action="navigate" data-hash="#/word/${w.id}">
                 <div class="word-card-top">
                   <div>
                     <div class="word-card-word">${esc(w.word)}</div>
@@ -630,7 +707,7 @@ const App = {
           <div class="empty-icon">🔍</div>
           <h3>${filter === 'all' && !search ? 'No words yet' : 'No words found'}</h3>
           <p>${filter === 'all' && !search ? 'Start building your vocabulary!' : 'Try a different filter or search.'}</p>
-          ${filter === 'all' && !search ? `<button class="btn btn-primary" onclick="App.navigate('#/add')">Add First Word</button>` : ''}
+          ${filter === 'all' && !search ? `<button class="btn btn-primary" data-action="navigate" data-hash="#/add">Add First Word</button>` : ''}
         </div>
       `}
     `;
@@ -648,11 +725,11 @@ const App = {
 
     document.getElementById('main').innerHTML = `
       <div class="page-header">
-        <button class="btn btn-secondary btn-sm" onclick="history.back()">← Back</button>
+        <button class="btn btn-secondary btn-sm" data-action="back">← Back</button>
         <div class="word-detail-actions">
-          <button class="btn btn-secondary btn-sm" onclick="App.openLogUsage('${w.id}')">🗣️ Log Usage (+${XP.log_usage} XP)</button>
-          <button class="btn btn-secondary btn-sm" onclick="App.navigate('#/edit/${w.id}')">✏️ Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="App.deleteWord('${w.id}')">Delete</button>
+          <button class="btn btn-secondary btn-sm" data-action="log-usage" data-id="${w.id}">🗣️ Log Usage (+${XP.log_usage} XP)</button>
+          <button class="btn btn-secondary btn-sm" data-action="navigate" data-hash="#/edit/${w.id}">✏️ Edit</button>
+          <button class="btn btn-danger btn-sm" data-action="delete-word" data-id="${w.id}">Delete</button>
         </div>
       </div>
 
@@ -708,7 +785,7 @@ const App = {
       <div class="usage-log mt-24">
         <div class="section-header">
           <h3>Usage Log <span class="text-muted" style="font-weight:400">(${w.usages.length})</span></h3>
-          <button class="btn btn-secondary btn-sm" onclick="App.openLogUsage('${w.id}')">+ Log Usage</button>
+          <button class="btn btn-secondary btn-sm" data-action="log-usage" data-id="${w.id}">+ Log Usage</button>
         </div>
         ${w.usages.length ? w.usages.slice().reverse().map(u => `
           <div class="usage-entry">
@@ -740,7 +817,7 @@ const App = {
           <div class="page-title">${isEdit ? 'Edit Word' : 'Add New Word'}</div>
           <div class="page-subtitle">${isEdit ? 'Update the details below' : 'Expand your vocabulary'}</div>
         </div>
-        ${isEdit ? `<button class="btn btn-secondary btn-sm" onclick="history.back()">Cancel</button>` : ''}
+        ${isEdit ? `<button class="btn btn-secondary btn-sm" data-action="back">Cancel</button>` : ''}
       </div>
 
       <div class="add-word-wrap">
@@ -794,19 +871,18 @@ const App = {
           <div class="form-group">
             <label class="form-label">Tags</label>
             <input id="f-tags-input" class="form-input" type="text"
-              placeholder="Type a tag and press Enter (e.g. formal, C1)"
-              onkeydown="App.handleTagInput(event)">
+              placeholder="Type a tag and press Enter (e.g. formal, C1)">
             <div class="tags-wrap" id="f-tags">
               ${(w.tags || []).map(t => `
-                <span class="tag">${esc(t)} <span class="tag-remove" onclick="this.parentElement.remove()">×</span></span>
+                <span class="tag">${esc(t)} <span class="tag-remove">×</span></span>
               `).join('')}
             </div>
             <div class="form-hint">Tags help you organise and filter your vocabulary</div>
           </div>
 
           <div style="display:flex;gap:12px;justify-content:flex-end;margin-top:8px">
-            <button class="btn btn-secondary" onclick="history.back()">Cancel</button>
-            <button class="btn btn-primary" onclick="App.saveWord('${editId || ''}')">
+            <button class="btn btn-secondary" data-action="back">Cancel</button>
+            <button class="btn btn-primary" data-action="save-word" data-id="${editId || ''}">
               ${isEdit ? '💾 Save Changes' : '＋ Add to Library'}
             </button>
           </div>
@@ -826,7 +902,11 @@ const App = {
     const container = document.getElementById('f-tags');
     const span = document.createElement('span');
     span.className = 'tag';
-    span.innerHTML = `${esc(val)} <span class="tag-remove" onclick="this.parentElement.remove()">×</span>`;
+    span.textContent = val + ' ';
+    const rm = document.createElement('span');
+    rm.className = 'tag-remove';
+    rm.textContent = '×';
+    span.appendChild(rm);
     container.appendChild(span);
     input.value = '';
   },
@@ -902,11 +982,11 @@ const App = {
           <h3>All caught up!</h3>
           <p>No ${mode} reviews due right now. Great work!</p>
           <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-            <button class="btn btn-primary" onclick="App.navigate('#/study/${mode === 'passive' ? 'active' : 'passive'}')">
+            <button class="btn btn-primary" data-action="navigate" data-hash="#/study/${mode === 'passive' ? 'active' : 'passive'}">
               Switch to ${mode === 'passive' ? 'Active' : 'Passive'} Study
             </button>
-            <button class="btn btn-secondary" onclick="App.navigate('#/add')">Add New Word</button>
-            <button class="btn btn-secondary" onclick="App.navigate('#/dashboard')">Dashboard</button>
+            <button class="btn btn-secondary" data-action="navigate" data-hash="#/add">Add New Word</button>
+            <button class="btn btn-secondary" data-action="navigate" data-hash="#/dashboard">Dashboard</button>
           </div>
         </div>
       `;
@@ -952,7 +1032,7 @@ const App = {
           </div>
           <div class="study-progress-text">${done} / ${total}</div>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="App.endSession()">End Session</button>
+        <button class="btn btn-secondary btn-sm" data-action="end-session">End Session</button>
       </div>
 
       <div class="study-card-wrap">
@@ -962,7 +1042,7 @@ const App = {
               <div class="card-prompt">What does this word mean?</div>
               <div class="card-word">${esc(word.word)}</div>
               ${word.partOfSpeech ? `<div class="card-pos">${esc(word.partOfSpeech)}</div>` : ''}
-              <button class="btn btn-primary reveal-btn" onclick="App.revealCard()">Reveal Definition</button>
+              <button class="btn btn-primary reveal-btn" data-action="reveal-card">Reveal Definition</button>
             </div>
             <div class="card-answer" id="card-answer">
               <div class="card-prompt">Definition</div>
@@ -974,7 +1054,7 @@ const App = {
               <div class="card-prompt">What's the word?</div>
               <div class="card-definition">${esc(word.definition)}</div>
               ${word.partOfSpeech ? `<div class="card-pos">${esc(word.partOfSpeech)}</div>` : ''}
-              <button class="btn btn-success reveal-btn" onclick="App.revealCard()">Reveal Word</button>
+              <button class="btn btn-success reveal-btn" data-action="reveal-card">Reveal Word</button>
             </div>
             <div class="card-answer" id="card-answer">
               <div class="card-prompt">The word is</div>
@@ -988,19 +1068,19 @@ const App = {
         <div class="rating-section" id="rating-section">
           <div class="rating-label">How well did you know it?</div>
           <div class="rating-buttons">
-            <button class="rating-btn again" onclick="App.rate(1)">
+            <button class="rating-btn again" data-action="rate" data-q="1">
               <span class="r-label">Again</span>
               <span class="r-interval">${SM2.formatInterval(p.again)}</span>
             </button>
-            <button class="rating-btn hard" onclick="App.rate(3)">
+            <button class="rating-btn hard" data-action="rate" data-q="3">
               <span class="r-label">Hard</span>
               <span class="r-interval">${SM2.formatInterval(p.hard)}</span>
             </button>
-            <button class="rating-btn good" onclick="App.rate(4)">
+            <button class="rating-btn good" data-action="rate" data-q="4">
               <span class="r-label">Good</span>
               <span class="r-interval">${SM2.formatInterval(p.good)}</span>
             </button>
-            <button class="rating-btn easy" onclick="App.rate(5)">
+            <button class="rating-btn easy" data-action="rate" data-q="5">
               <span class="r-label">Easy</span>
               <span class="r-interval">${SM2.formatInterval(p.easy)}</span>
             </button>
@@ -1092,11 +1172,11 @@ const App = {
           </div>
         </div>
         <div class="session-actions">
-          <button class="btn btn-primary" onclick="App.renderStudy('${s.mode}')">Study Again</button>
-          <button class="btn btn-secondary" onclick="App.renderStudy('${s.mode === 'passive' ? 'active' : 'passive'}')">
+          <button class="btn btn-primary" data-action="study" data-mode="${s.mode}">Study Again</button>
+          <button class="btn btn-secondary" data-action="study" data-mode="${s.mode === 'passive' ? 'active' : 'passive'}">
             Switch to ${s.mode === 'passive' ? 'Active' : 'Passive'}
           </button>
-          <button class="btn btn-secondary" onclick="App.navigate('#/dashboard')">Dashboard</button>
+          <button class="btn btn-secondary" data-action="navigate" data-hash="#/dashboard">Dashboard</button>
         </div>
       </div>
     `;
@@ -1170,8 +1250,8 @@ const App = {
         </select>
       </div>
       <div class="modal-actions">
-        <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="App.saveUsage('${wordId}')">Log Usage (+${XP.log_usage} XP)</button>
+        <button class="btn btn-secondary" data-action="close-modal">Cancel</button>
+        <button class="btn btn-primary" data-action="save-usage" data-id="${wordId}">Log Usage (+${XP.log_usage} XP)</button>
       </div>
     `);
 
