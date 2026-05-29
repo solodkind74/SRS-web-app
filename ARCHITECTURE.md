@@ -44,10 +44,11 @@ User highlights text on any page
    api.dictionaryapi.dev
          │  { phonetic, audio, meanings }
          ▼
-   Popup renders: IPA · 🔊 audio · definition · example
+   Popup renders: IPA · 🔊 audio · all meanings (noun/verb/adj…) · examples
          │
          │  user clicks "+ Add to Vocab"
          │  chrome.runtime.sendMessage  ADD_WORD
+         │  (all meanings combined into one definition string, all examples collected)
          ▼
    background.js writes to chrome.storage.local
          │
@@ -68,7 +69,7 @@ Key: `lexiflow_v1` in `chrome.storage.local`
     {
       "id": "string",            // uid: timestamp36 + random
       "word": "string",
-      "definition": "string",
+      "definition": "string",    // all parts of speech joined by \n, e.g. "[noun] silence\n[verb] to quiet"
       "phonetic": "string",      // IPA, e.g. "/wɜːd/"
       "examples": ["string"],
       "tags": ["string"],
@@ -161,7 +162,8 @@ The extension still lets the user save the word; definition will be empty and ca
 ### `content.js` (Content Script)
 - Injected into every page at `document_idle`
 - Uses **Shadow DOM** for full CSS isolation from the host page
-- `mouseup` → checks selection (max 5 words / 80 chars) → shows popup
+- `mouseup` → checks selection (max 5 words / 80 chars, no digits) → shows popup
+- Popup shows all parts of speech with definitions and examples; "＋ Add to Vocab" saves all meanings
 - `Escape` / click-outside → dismisses popup
 - Audio playback via `new Audio(url)`
 
@@ -178,6 +180,9 @@ This means `index.html` works both as an extension page and as a plain local fil
 
 ### Routing
 Hash-based SPA router: `#/dashboard`, `#/library`, `#/study/passive`, `#/study/active`, `#/add`, `#/word/:id`, `#/achievements`
+
+### Add / Edit Form
+- **🔍 Fetch button** next to the word input calls the dictionary API directly from the extension page and auto-populates phonetic, definition (all meanings, one per line), part of speech, and example sentences.
 
 ### Gamification
 XP system, 10 levels (Novice → Master), 16 achievements, daily challenge word, usage logging.

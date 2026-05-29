@@ -265,7 +265,7 @@
   function renderNotFound(word) {
     const body = shadow.querySelector('.body');
     body.innerHTML = `<div class="not-found">No definition found.</div>`;
-    body.appendChild(buildAddButton(word, '', '', []));
+    body.appendChild(buildAddButton(word, [], ''));
   }
 
   function renderResult(word, data) {
@@ -290,9 +290,6 @@
       `;
     }).join('');
 
-    const firstDef = meanings?.[0]?.definitions?.[0]?.definition ?? '';
-    const firstExample = meanings?.[0]?.definitions?.[0]?.example ?? '';
-
     const body = shadow.querySelector('.body');
     body.innerHTML = `
       ${phonRow}
@@ -308,10 +305,23 @@
       });
     }
 
-    body.appendChild(buildAddButton(word, firstDef, phonetic ?? '', firstExample ? [firstExample] : []));
+    body.appendChild(buildAddButton(word, meanings || [], phonetic ?? ''));
   }
 
-  function buildAddButton(word, definition, phonetic, examples) {
+  function buildAddButton(word, meanings, phonetic) {
+    // Combine all parts of speech into one definition string
+    const defs = (meanings || []).map(m => {
+      const mDefs = (m.definitions || []).slice(0, 2).map(d => d.definition).filter(Boolean);
+      if (!mDefs.length) return '';
+      return (m.partOfSpeech ? `[${m.partOfSpeech}] ` : '') + mDefs.join('; ');
+    }).filter(Boolean);
+    const definition = defs.join('\n');
+
+    // Collect examples across all meanings (up to 5)
+    const examples = (meanings || [])
+      .flatMap(m => (m.definitions || []).map(d => d.example).filter(Boolean))
+      .slice(0, 5);
+
     const btn = document.createElement('button');
     btn.className = 'add-btn';
     btn.textContent = '＋ Add to Vocab';

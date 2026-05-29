@@ -210,6 +210,10 @@ function esc(str) {
     .replace(/"/g, '&quot;');
 }
 
+function escMultiline(str) {
+  return esc(str).replace(/\n/g, '<br>');
+}
+
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -385,6 +389,7 @@ const App = {
         break;
       }
       case 'search-lib': this.renderLibrary(d.filter, d.value, d.sort); break;
+      case 'fetch-api':  this.fetchWordFromApi(); break;
     }
   },
 
@@ -743,7 +748,7 @@ const App = {
         </div>
       </div>
 
-      <div class="word-definition">${esc(w.definition)}</div>
+      <div class="word-definition">${escMultiline(w.definition)}</div>
 
       ${w.examples.filter(Boolean).length ? `
         <h3 style="margin-bottom:10px">Examples</h3>
@@ -825,8 +830,12 @@ const App = {
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Word *</label>
-              <input id="f-word" class="form-input" type="text" placeholder="e.g. ephemeral"
-                value="${esc(w.word)}" autocomplete="off" autocapitalize="none">
+              <div style="display:flex;gap:8px">
+                <input id="f-word" class="form-input" type="text" placeholder="e.g. ephemeral"
+                  value="${esc(w.word)}" autocomplete="off" autocapitalize="none">
+                <button class="btn btn-secondary btn-sm" data-action="fetch-api" type="button"
+                  style="white-space:nowrap">🔍 Fetch</button>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label">Part of Speech</label>
@@ -909,6 +918,52 @@ const App = {
     span.appendChild(rm);
     container.appendChild(span);
     input.value = '';
+  },
+
+  async fetchWordFromApi() {
+    const word = document.getElementById('f-word').value.trim();
+    if (!word) { Toast.show('Enter a word first', 'xp'); return; }
+
+    const btn = document.querySelector('[data-action="fetch-api"]');
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
+    try {
+      const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`);
+      if (!res.ok) throw new Error('not_found');
+      const json = await res.json();
+      const entry = json[0];
+      if (!entry) throw new Error('not_found');
+
+      const phonetic = entry.phonetic || entry.phonetics?.[0]?.text || '';
+      const meanings = (entry.meanings || []).slice(0, 3);
+
+      const defs = meanings.map(m => {
+        const mDefs = (m.definitions || []).slice(0, 2).map(d => d.definition).filter(Boolean);
+        if (!mDefs.length) return '';
+        return (m.partOfSpeech ? `[${m.partOfSpeech}] ` : '') + mDefs.join('; ');
+      }).filter(Boolean);
+
+      const examples = meanings
+        .flatMap(m => (m.definitions || []).map(d => d.example).filter(Boolean))
+        .slice(0, 3);
+
+      const pos = meanings[0]?.partOfSpeech || '';
+
+      if (phonetic) document.getElementById('f-phonetic').value = phonetic;
+      document.getElementById('f-def').value = defs.join('\n');
+      if (pos) {
+        const sel = document.getElementById('f-pos');
+        if ([...sel.options].some(o => o.value === pos)) sel.value = pos;
+      }
+      const exInputs = document.querySelectorAll('.example-input');
+      examples.forEach((ex, i) => { if (exInputs[i]) exInputs[i].value = ex; });
+
+      Toast.show(`Definition fetched for "${word}"`, 'success');
+    } catch (_) {
+      Toast.show('No definition found — try a different spelling', 'xp');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🔍 Fetch'; }
+    }
   },
 
   saveWord(editId) {
@@ -1052,7 +1107,7 @@ const App = {
           ` : `
             <div class="card-front" id="card-front">
               <div class="card-prompt">What's the word?</div>
-              <div class="card-definition">${esc(word.definition)}</div>
+              <div class="card-definition">${escMultiline(word.definition)}</div>
               ${word.partOfSpeech ? `<div class="card-pos">${esc(word.partOfSpeech)}</div>` : ''}
               <button class="btn btn-success reveal-btn" data-action="reveal-card">Reveal Word</button>
             </div>
