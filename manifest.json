@@ -5,7 +5,12 @@
   "description": "Highlight any word to look it up and save it to your spaced-repetition vocabulary.",
 
   "permissions": ["storage", "tabs"],
-  "host_permissions": ["https://api.dictionaryapi.dev/*"],
+  "host_permissions": [
+    "https://api.dictionaryapi.dev/*",
+    "https://identitytoolkit.googleapis.com/*",
+    "https://securetoken.googleapis.com/*",
+    "https://firestore.googleapis.com/*"
+  ],
 
   "background": {
     "service_worker": "background.js"

@@ -68,6 +68,25 @@ const Storage = {
 
   async load() {
     if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
+      // Firestore is the source of truth when the user is signed in
+      if (typeof FB !== 'undefined' && FB.configured) {
+        try {
+          const fbData = await FB.load();
+          if (fbData) {
+            chrome.storage.local.set({ [this.KEY]: fbData }); // update local cache
+            return fbData;
+          }
+          // Firestore empty (new account) — check local and migrate
+          const r = await chrome.storage.local.get(this.KEY);
+          const localData = r[this.KEY];
+          if (localData) {
+            FB.save(localData).catch(() => {}); // migrate existing words to cloud
+            return localData;
+          }
+        } catch (e) {
+          console.warn('Firebase load failed, using local cache:', e.message);
+        }
+      }
       const r = await chrome.storage.local.get(this.KEY);
       return r[this.KEY] || this.defaults();
     }
@@ -78,6 +97,9 @@ const Storage = {
   save(data) {
     if (typeof chrome !== 'undefined' && chrome?.storage?.local) {
       chrome.storage.local.set({ [this.KEY]: data });
+      if (typeof FB !== 'undefined' && FB.configured) {
+        FB.save(data).catch(e => console.warn('Firebase save failed:', e.message));
+      }
       return;
     }
     localStorage.setItem(this.KEY, JSON.stringify(data));
@@ -309,19 +331,30 @@ const App = {
   sessionStart: null,
 
   async init() {
+    window.addEventListener('hashchange', () => this.route());
+    if (typeof FB !== 'undefined' && FB.configured) {
+      const auth = await FB.getAuth();
+      if (!auth) {
+        this._attachGlobalListeners();
+        this.renderLoginPage();
+        return;
+      }
+    }
+    await this._loadAndStart();
+  },
+
+  async _loadAndStart() {
     this.data = await Storage.load();
-    // ensure all words have required fields (migration safety)
     for (const w of this.data.words) {
-      w.usages = w.usages || [];
-      w.tags = w.tags || [];
-      w.notes = w.notes || '';
+      w.usages   = w.usages   || [];
+      w.tags     = w.tags     || [];
+      w.notes    = w.notes    || '';
       w.phonetic = w.phonetic || '';
       w.examples = w.examples || [];
     }
     this.checkInitStreak();
     this._attachGlobalListeners();
     this._attachStorageListener();
-    window.addEventListener('hashchange', () => this.route());
     this.route();
   },
 
@@ -345,6 +378,8 @@ const App = {
   },
 
   _attachGlobalListeners() {
+    if (this._listenersAttached) return;
+    this._listenersAttached = true;
     document.addEventListener('click', e => {
       if (e.target.classList.contains('tag-remove')) { e.target.parentElement.remove(); return; }
       if (e.target.id === 'modal-overlay') { this.closeModal(); return; }
@@ -389,7 +424,10 @@ const App = {
         break;
       }
       case 'search-lib': this.renderLibrary(d.filter, d.value, d.sort); break;
-      case 'fetch-api':  this.fetchWordFromApi(); break;
+      case 'fetch-api':   this.fetchWordFromApi(); break;
+      case 'auth-signin': this.handleAuth('signin'); break;
+      case 'auth-signup': this.handleAuth('signup'); break;
+      case 'auth-signout': this.handleSignOut(); break;
     }
   },
 
@@ -410,6 +448,7 @@ const App = {
   },
 
   route() {
+    if (!this.data) return;
     const hash = window.location.hash.slice(1) || '/dashboard';
     const [path, ...rest] = hash.split('/').filter(Boolean);
     const viewMap = {
@@ -435,6 +474,7 @@ const App = {
   // ── NAVBAR ────────────────────────────────────────────────────────────────
 
   renderNav() {
+    if (!this.data) return;
     const { xp, streak, level } = this.data.stats;
     const { cur, nxt, progress } = getLevelInfo(xp);
     const active = this.view;
@@ -464,6 +504,9 @@ const App = {
         <div class="xp-bar-mini">
           <div class="xp-bar-fill" style="width:${progress.toFixed(1)}%"></div>
         </div>
+        ${typeof FB !== 'undefined' && FB.configured
+          ? `<button class="btn btn-secondary btn-sm" data-action="auth-signout" style="margin-left:8px">Sign out</button>`
+          : ''}
       </div>
     `;
   },
@@ -477,6 +520,74 @@ const App = {
 
   closeModal() {
     document.getElementById('modal-overlay').classList.add('hidden');
+  },
+
+  // ── AUTH ──────────────────────────────────────────────────────────────────
+
+  renderLoginPage() {
+    document.getElementById('navbar').innerHTML = `
+      <a class="nav-brand" href="#">
+        <span class="logo">📚</span>
+        <span class="name">LexiFlow</span>
+      </a>
+    `;
+    document.getElementById('main').innerHTML = `
+      <div style="max-width:380px;margin:80px auto">
+        <div class="card">
+          <div class="page-title" style="text-align:center;margin-bottom:4px">Welcome to LexiFlow</div>
+          <div class="text-muted" style="text-align:center;margin-bottom:24px;font-size:0.9rem">
+            Sign in to keep your vocabulary safe in the cloud
+          </div>
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input id="auth-email" class="form-input" type="email" placeholder="you@example.com" autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password <span class="text-subtle">(min 6 characters)</span></label>
+            <input id="auth-password" class="form-input" type="password" placeholder="••••••••" autocomplete="current-password">
+          </div>
+          <div id="auth-error" style="color:var(--danger);font-size:0.875rem;min-height:20px;margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" style="flex:1" data-action="auth-signup">Create account</button>
+            <button class="btn btn-primary" style="flex:1" data-action="auth-signin">Sign in</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('auth-email').focus();
+  },
+
+  async handleAuth(mode) {
+    const email    = document.getElementById('auth-email')?.value.trim();
+    const password = document.getElementById('auth-password')?.value;
+    const errorEl  = document.getElementById('auth-error');
+
+    if (!email || !password) {
+      if (errorEl) errorEl.textContent = 'Please enter your email and password.';
+      return;
+    }
+
+    const btn = document.querySelector(`[data-action="auth-${mode}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
+    try {
+      if (mode === 'signin') {
+        await FB.signIn(email, password);
+      } else {
+        await FB.signUp(email, password);
+      }
+      await this._loadAndStart();
+    } catch (e) {
+      const msg = e.message.replace(/_/g, ' ').toLowerCase();
+      if (errorEl) errorEl.textContent = msg.charAt(0).toUpperCase() + msg.slice(1) + '.';
+      if (btn) { btn.disabled = false; btn.textContent = mode === 'signin' ? 'Sign in' : 'Create account'; }
+    }
+  },
+
+  async handleSignOut() {
+    await FB.signOut();
+    this.data = null;
+    this.renderLoginPage();
   },
 
   // ──────────────────────────────────────────────────────────────────────────

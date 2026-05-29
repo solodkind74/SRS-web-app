@@ -1,5 +1,7 @@
 'use strict';
 
+importScripts('config.js', 'firebase.js');
+
 const STORAGE_KEY = 'lexiflow_v1';
 const DICT_API = 'https://api.dictionaryapi.dev/api/v2/entries/en/';
 
@@ -60,6 +62,7 @@ async function addWord(wordData) {
   });
 
   await chrome.storage.local.set({ [STORAGE_KEY]: data });
+  FB.save(data).catch(() => {}); // best-effort cloud sync
   return { success: true };
 }
 
