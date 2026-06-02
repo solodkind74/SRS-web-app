@@ -69,7 +69,7 @@ Key: `lexiflow_v1` in `chrome.storage.local`
     {
       "id": "string",            // uid: timestamp36 + random
       "word": "string",
-      "definition": "string",    // all parts of speech joined by \n, e.g. "[noun] silence\n[verb] to quiet"
+      "definition": "string",    // all POS joined by \n; multiple defs per POS numbered: "[noun] 1. silence; 2. hush\n[verb] to quiet"
       "phonetic": "string",      // IPA, e.g. "/wɜːd/"
       "examples": ["string"],
       "tags": ["string"],
@@ -163,7 +163,9 @@ The extension still lets the user save the word; definition will be empty and ca
 - Injected into every page at `document_idle`
 - Uses **Shadow DOM** for full CSS isolation from the host page
 - `mouseup` → checks selection (max 5 words / 80 chars, no digits) → shows popup
-- Popup shows all parts of speech with definitions and examples; "＋ Add to Vocab" saves all meanings
+- Popup shows up to 3 parts of speech; within each POS **all definitions** are listed (numbered when >1), each with its example
+- Popup body is scrollable (`max-height: 70vh`, `overflow-y: auto`); "＋ Add to Vocab" button is sticky at the bottom
+- Saving stores every definition and every example the API returns (no caps)
 - `Escape` / click-outside → dismisses popup
 - Audio playback via `new Audio(url)`
 
@@ -182,7 +184,7 @@ This means `index.html` works both as an extension page and as a plain local fil
 Hash-based SPA router: `#/dashboard`, `#/library`, `#/study/passive`, `#/study/active`, `#/add`, `#/word/:id`, `#/achievements`
 
 ### Add / Edit Form
-- **🔍 Fetch button** next to the word input calls the dictionary API directly from the extension page and auto-populates phonetic, definition (all meanings, one per line), part of speech, and example sentences.
+- **🔍 Fetch button** next to the word input calls the dictionary API directly from the extension page and auto-populates phonetic, definition (all POS, all definitions numbered per POS, one POS per line), part of speech, and all available example sentences.
 
 ### Gamification
 XP system, 10 levels (Novice → Master), 16 achievements, daily challenge word, usage logging.
