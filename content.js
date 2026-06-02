@@ -25,10 +25,10 @@
     :host { all: initial; }
 
     #popup {
-      display: none;
       position: fixed;
       max-width: 320px;
       min-width: 220px;
+      max-height: 70vh;
       background: #1e1e2e;
       color: #cdd6f4;
       border-radius: 12px;
@@ -38,9 +38,11 @@
       line-height: 1.5;
       pointer-events: auto;
       overflow: hidden;
+      display: none;
+      flex-direction: column;
       animation: lf-pop .15s ease;
     }
-    #popup.visible { display: block; }
+    #popup.visible { display: flex; }
 
     @keyframes lf-pop {
       from { opacity: 0; transform: translateY(-4px) scale(.97); }
@@ -53,6 +55,7 @@
       gap: 8px;
       padding: 10px 12px 8px;
       border-bottom: 1px solid rgba(255,255,255,.08);
+      flex-shrink: 0;
     }
     .word {
       font-weight: 700;
@@ -75,7 +78,14 @@
     }
     .close-btn:hover { color: #cdd6f4; }
 
-    .body { padding: 10px 12px 12px; }
+    .body {
+      padding: 10px 12px 12px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(203,166,247,.3) transparent;
+    }
 
     .phonetic-row {
       display: flex;
@@ -142,6 +152,8 @@
       width: 100%;
       margin-top: 12px;
       padding: 7px 12px;
+      position: sticky;
+      bottom: 0;
       background: #cba6f7;
       color: #1e1e2e;
       border: none;
@@ -250,9 +262,10 @@
 
     // clamp horizontally
     left = Math.max(GAP, Math.min(left, window.innerWidth - pw - GAP));
-    // flip above if would go off bottom
-    if (top + 180 > window.innerHeight) {
-      top = selRect.top - 180 - GAP;
+    // flip above if less than 30% of viewport height remains below selection
+    const minH = window.innerHeight * 0.3;
+    if (top + minH > window.innerHeight) {
+      top = selRect.top - minH - GAP;
     }
     top = Math.max(GAP, top);
 
@@ -278,14 +291,21 @@
         </div>`
       : '';
 
-    const meaningBlocks = (meanings || []).slice(0, 2).map(m => {
-      const def = m.definitions?.[0]?.definition ?? '';
-      const example = m.definitions?.[0]?.example ?? '';
+    const meaningBlocks = (meanings || []).slice(0, 3).map(m => {
+      const defs = m.definitions || [];
+      const defsHtml = defs.map((d, i) => {
+        const defText = d.definition ?? '';
+        const exText = d.example ?? '';
+        const prefix = defs.length > 1 ? `${i + 1}. ` : '';
+        return `
+          <div class="def">${esc(prefix + defText)}</div>
+          ${exText ? `<div class="example">"${esc(exText)}"</div>` : ''}
+        `;
+      }).join('');
       return `
         <div class="meaning-block">
           <div class="meaning-pos">${esc(m.partOfSpeech || '')}</div>
-          <div class="def">${esc(def)}</div>
-          ${example ? `<div class="example">"${esc(example)}"</div>` : ''}
+          ${defsHtml}
         </div>
       `;
     }).join('');
@@ -311,16 +331,16 @@
   function buildAddButton(word, meanings, phonetic) {
     // Combine all parts of speech into one definition string
     const defs = (meanings || []).map(m => {
-      const mDefs = (m.definitions || []).slice(0, 2).map(d => d.definition).filter(Boolean);
+      const mDefs = (m.definitions || []).map(d => d.definition).filter(Boolean);
       if (!mDefs.length) return '';
-      return (m.partOfSpeech ? `[${m.partOfSpeech}] ` : '') + mDefs.join('; ');
+      const numbered = mDefs.length > 1 ? mDefs.map((d, i) => `${i + 1}. ${d}`) : mDefs;
+      return (m.partOfSpeech ? `[${m.partOfSpeech}] ` : '') + numbered.join('; ');
     }).filter(Boolean);
     const definition = defs.join('\n');
 
-    // Collect examples across all meanings (up to 5)
+    // Collect all examples across all meanings
     const examples = (meanings || [])
-      .flatMap(m => (m.definitions || []).map(d => d.example).filter(Boolean))
-      .slice(0, 5);
+      .flatMap(m => (m.definitions || []).map(d => d.example).filter(Boolean));
 
     const btn = document.createElement('button');
     btn.className = 'add-btn';

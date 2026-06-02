@@ -1049,14 +1049,14 @@ const App = {
       const meanings = (entry.meanings || []).slice(0, 3);
 
       const defs = meanings.map(m => {
-        const mDefs = (m.definitions || []).slice(0, 2).map(d => d.definition).filter(Boolean);
+        const mDefs = (m.definitions || []).map(d => d.definition).filter(Boolean);
         if (!mDefs.length) return '';
-        return (m.partOfSpeech ? `[${m.partOfSpeech}] ` : '') + mDefs.join('; ');
+        const numbered = mDefs.length > 1 ? mDefs.map((d, i) => `${i + 1}. ${d}`) : mDefs;
+        return (m.partOfSpeech ? `[${m.partOfSpeech}] ` : '') + numbered.join('; ');
       }).filter(Boolean);
 
       const examples = meanings
-        .flatMap(m => (m.definitions || []).map(d => d.example).filter(Boolean))
-        .slice(0, 3);
+        .flatMap(m => (m.definitions || []).map(d => d.example).filter(Boolean));
 
       const pos = meanings[0]?.partOfSpeech || '';
 
